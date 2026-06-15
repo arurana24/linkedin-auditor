@@ -56,7 +56,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# FIXED: Added the exact target LinkedIn subdomain filter per country zone
+# Target LinkedIn subdomain filter per country zone
 COUNTRY_MAP = {
     "India 🇮🇳": {"hl": "en-IN", "gl": "IN", "ceid": "IN:en", "subdomain": "in.linkedin.com/in/"},
     "United States 🇺🇸": {"hl": "en-US", "gl": "US", "ceid": "US:en", "subdomain": "linkedin.com/in/"},
@@ -102,8 +102,8 @@ class GoogleRSSXRayService:
             return google_url
 
     def fetch_country_targeted_leads(self, company: str, position: str, locale: dict) -> List[Dict[str, Any]]:
-        # FIXED: Generates the search query dynamically using the specific country's subdomain prefix
-        raw_query = f'site:{locale["subdomain"]} "{company}" "{position}"'
+        # STRICT BOOLEYAN LOGIC UPDATE: Adds precise contextual anchors directly into the search string
+        raw_query = f'site:{locale["subdomain"]} "{position}" "{company}" -intitle:"former" -intitle:"past"'
         encoded_query = quote(raw_query)
         
         request_url = f"{self.base_url}?q={encoded_query}&hl={locale['hl']}&gl={locale['gl']}&ceid={locale['ceid']}"
@@ -125,18 +125,22 @@ class GoogleRSSXRayService:
                 clean_snippet = re.sub(r'<[^>]*>', '', description_text).lower()
                 name, headline = self.parse_name_headline(title_text)
                 
-                # Check for active context matches while filtering out clear past-employment markers
+                # STRENGTHENED REVERIFICATION PASS
                 company_lower = company.lower()
                 is_current = False
                 
-                if company_lower in headline.lower() or company_lower in clean_snippet:
+                # Verify that the company name explicitly appears as a current anchor match
+                if company_lower in headline.lower() or f"at {company_lower}" in clean_snippet:
                     is_current = True
                     
-                exclusion_tokens = ["former", "past:", "ex-", "previously", "retired"]
+                # Explicitly flag past role keywords
+                exclusion_tokens = ["former", "past:", "ex-", "previously", "retired", "ex-employee", "worked at"]
                 if any(token in clean_snippet or token in headline.lower() for token in exclusion_tokens):
                     is_current = False
                 
-                verification_status = "Verified Current ✅" if is_current else "Unverified / Past Role ⚠️"
+                # Skip past profiles entirely to clean up the output data table
+                if not is_current:
+                    continue
                 
                 if "linkedin" in clean_snippet or "linkedin" in title_text.lower():
                     records.append({
@@ -145,7 +149,7 @@ class GoogleRSSXRayService:
                         "Professional Name": name,
                         "Current Profile Headline": headline,
                         "Google Link Container": google_link,
-                        "Employment Verification": verification_status
+                        "Employment Verification": "Verified Current ✅"
                     })
             return records
         except Exception:
@@ -175,8 +179,8 @@ with col_right:
     st.markdown("### 2. Geographic Filters")
     selected_country = st.selectbox("Select Target Country Perspective:", list(COUNTRY_MAP.keys()))
     st.info(
-        "🛡️ **System Infrastructure Status: Open Proxy Active**\n"
-        "This tool automatically isolates localized profile subdomains dynamically based on your chosen location drop-down menu selection."
+        "🛡️ **System Infrastructure Status: Strict Filter Active**\n"
+        "This version automatically drops past employees and extracts clean, direct LinkedIn URLs."
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
@@ -218,7 +222,7 @@ if st.button("Run Personnel Target Search", type="primary"):
             url_progress.empty()
             status_text.empty()
             
-            st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} unique corporate leads for {selected_country}.")
+            st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} active corporate leads for {selected_country}.")
             
             display_cols = ["Professional Name", "Current Profile Headline", "True LinkedIn Profile URL", "Employment Verification", "Target Designation"]
             st.dataframe(df_final[display_cols], use_container_width=True)
@@ -235,7 +239,7 @@ if st.button("Run Personnel Target Search", type="primary"):
             )
         else:
             status_text.empty()
-            st.error(f"No data streams could be parsed from the regional indexes for {selected_country}. Verify input parameters.")
+            st.error(f"No active matching profiles found in {selected_country}. All historical logs were successfully filtered out.")
 
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
