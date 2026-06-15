@@ -29,55 +29,57 @@ def get_base64_image(image_path):
 
 logo_base64 = get_base64_image("logo.jpeg") or get_base64_image("logo.jpg")
 
-# High-End Premium Tech Aesthetic Layout Configuration
+# FIXED: Re-implemented clean, premium Desi-Cool Teal Aesthetic Layout Configuration
 st.markdown(
     """
     <style>
-    .stApp { background-color: #f8fafc; }
+    .stApp { background-color: #81d8d0; }
     h1 {
         color: #0f172a !important;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         font-weight: 800;
         letter-spacing: -0.5px;
     }
-    h2, h3, p, label, .stMarkdown, .stText {
-        color: #334155 !important;
+    h2, h3, p, label, .stMarkdown, .stText, [data-testid="stHeader"] {
+        color: #1e293b !important;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
     div.stButton > button {
-        background-color: #2563eb !important;
+        background-color: #008080 !important;
         color: #ffffff !important;
         border-radius: 8px;
-        border: none !important;
+        border: 1px solid #005a5a !important;
         padding: 0.7rem 2.5rem;
         font-weight: 600;
         font-size: 16px;
         box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-        transition: all 0.2s ease-in-out;
     }
     div.stButton > button:hover {
-        background-color: #1d4ed8 !important;
-        transform: translateY(-1px);
-        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+        background-color: #005a5a !important;
+        color: #ffffff !important;
     }
     div.stDownloadButton > button {
-        background-color: #059669 !important;
+        background-color: #047857 !important;
         color: #ffffff !important;
         border-radius: 8px;
         border: none !important;
-        padding: 0.6rem 2rem;
+        padding: 0.6rem 2 camp;
         font-weight: 600;
     }
     div.stDownloadButton > button:hover {
-        background-color: #047857 !important;
+        background-color: #065f46 !important;
     }
-    .stProgress > div > div > div > div { background-color: #2563eb !important; }
-    .css-1wivfrv, [data-testid="stSidebar"] { background-color: #ffffff !important; }
+    .stProgress > div > div > div > div { background-color: #008080 !important; }
     .stDataFrame {
         border-radius: 8px;
         overflow: hidden;
         box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
     }
+    .bottom-logo-container {
+        display: flex; justify-content: center; align-items: center; width: 100%;
+        margin-top: 50px; padding-top: 20px; margin-bottom: 20px;
+    }
+    .bottom-logo-container img { width: 140px; border-radius: 6px; }
     </style>
     """,
     unsafe_allow_html=True
@@ -145,14 +147,11 @@ class GoogleRSSXRayService:
                 company_lower = company.lower()
                 headline_lower = headline.lower()
                 
-                # CRITICAL VERIFICATION PASS: Strict structural matching rules
                 exclusion_tokens = ["former", "past:", "ex-", "previously", "retired", "ex-employee", "worked at"]
                 is_past_employee = any(token in clean_snippet or token in headline_lower for token in exclusion_tokens)
                 
-                # Verify the candidate currently operates at the target firm
                 is_verified_current = (company_lower in headline_lower) or (f"at {company_lower}" in clean_snippet)
                 
-                # STRICT FILTER GATE: Instantly drop non-verified, historical, or messy entries
                 if is_past_employee or not is_verified_current:
                     continue
                 
@@ -175,7 +174,7 @@ search_service = GoogleRSSXRayService()
 # STREAMLIT PRESENTATION VIEW LAYER
 # ==========================================
 st.title("🎯 Premium Client Extraction Engine")
-st.markdown("Generate highly accurate, verified target lists of currently active enterprise profiles. Zero clutter.")
+st.markdown("Generate highly accurate target lists of currently active enterprise profiles. Zero clutter.")
 
 col_left, col_right = st.columns([1.2, 0.8])
 
@@ -194,8 +193,7 @@ with col_right:
     st.markdown("---")
     st.caption(
         "💡 **Quality Assurance Notice:**\n"
-        "This tool uses an internal multi-pass verification filter. Historical listings, former roles, "
-        "and mismatched profiles are automatically purged before compiling your spreadsheet."
+        "Historical listings, former roles, and mismatched profiles are automatically purged before compiling your spreadsheet."
     )
 
 if st.button("Execute Extraction Pipeline", type="primary"):
@@ -210,14 +208,19 @@ if st.button("Execute Extraction Pipeline", type="primary"):
         st.error("Pipeline Error: Please enter at least one target designation title.")
     else:
         results_pool = []
-        progress_bar = st.progress(0)
+        progress_bar = st.progress(0.0)
         status_text = st.empty()
+        
+        total_designations = len(active_designations)
         
         for idx, position in enumerate(active_designations):
             status_text.text(f"Scanning {selected_country} registries for: {position}...")
             batch = search_service.fetch_strict_current_leads(target_company, position, locale_config)
             results_pool.extend(batch)
-            progress_bar.progress((idx + 0.5) / len(active_designations))
+            
+            # FIXED: Safe, capped calculation to ensure the progress bar stays between 0.0 and 1.0
+            prog_val = min(((idx + 0.5) / total_designations) * 0.5, 0.5)
+            progress_bar.progress(float(prog_val))
             
         if results_pool:
             status_text.text("Tracing tracking routing headers to unpack direct profile paths...")
@@ -230,17 +233,18 @@ if st.button("Execute Extraction Pipeline", type="primary"):
                 google_url = row["Google Link Container"]
                 real_link = search_service.unshorten_google_url(google_url)
                 real_urls.append(real_link)
-                progress_bar.progress((idx + 0.5) / len(active_designations) + (i / total_urls) * 0.5)
+                
+                # FIXED: Bounded step increments that will never exceed 1.0
+                prog_val = min(0.5 + ((i + 1) / total_urls) * 0.5, 1.0)
+                progress_bar.progress(float(prog_val))
                 
             df_final["LinkedIn Profile URL"] = real_urls
-            progress_bar.progress(1.0)
-            time.sleep(0.4)
+            time.sleep(0.2)
             progress_bar.empty()
             status_text.empty()
             
-            st.success(f"Successfully compiled {len(df_final)} highly accurate active leads for {selected_country}!")
+            st.success(f"Successfully compiled {len(df_final)} active leads for {selected_country}!")
             
-            # Clean layout view containing only the high-value data blocks
             display_cols = ["Full Name", "Company", "Current Designation", "LinkedIn Profile URL", "Status"]
             st.dataframe(df_final[display_cols], use_container_width=True)
             
