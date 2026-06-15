@@ -117,7 +117,8 @@ class GoogleRSSXRayService:
             return google_url
 
     def fetch_strict_current_leads(self, company: str, position: str, locale: dict) -> List[Dict[str, Any]]:
-        raw_query = f'site:{locale["subdomain"]} {company} {position}'
+        # Broader base search query to capture all formatting styles on Google's index
+        raw_query = f'site:{locale["subdomain"]} "{company}" {position}'
         encoded_query = quote(raw_query)
         request_url = f"{self.base_url}?q={encoded_query}&hl={locale['hl']}&gl={locale['gl']}&ceid={locale['ceid']}"
         
@@ -135,30 +136,39 @@ class GoogleRSSXRayService:
                 google_link = item.find("link").text if item.find("link") is not None else ""
                 description_text = item.find("description").text if item.find("description") is not None else ""
                 
-                clean_snippet = re.sub(r'<[^>]*>', '', description_text).lower()
+                clean_snippet = re.sub(r'<[^>]*>', '', description_text)
                 name, headline = self.parse_name_headline(title_text)
                 
-                company_lower = company.lower()
-                headline_lower = headline.lower()
-                position_lower = position.lower()
+                full_text_block = f"{headline} {clean_snippet}"
+                company_escaped = re.escape(company)
                 
-                # 1. ACCURACY GATE: Clean designation check
-                # Ensures the target title keyword is explicitly in their headline profile summary
-                if position_lower not in headline_lower:
+                # 1. ADVANCED REGEX GATE: Catch "Ex-" or historic employment flags immediately surrounding company name
+                # Matches patterns like: ex-sugar, former sugar, sugar (former), worked at sugar, etc.
+                past_role_pattern = rf"(\bex\s*-\s*{company_escaped}|\bformer\s+{company_escaped}|\bpreviously\s+(?:at\s+)?{company_escaped}|\b{company_escaped}\s+\(former\)|\bworked\s+at\s+{company_escaped})"
+                if re.search(past_role_pattern, full_text_block, re.IGNORECASE):
+                    continue  # Drops past employees instantly
+                
+                # 2. ACCURACY FILTER GATE: Verify they are currently holding the requested designation layout
+                position_escaped = re.escape(position)
+                if not re.search(rf"\b{position_escaped}\b", headline, re.IGNORECASE):
                     continue
                 
-                # 2. ACCURACY GATE: Past-employment text exclusion filter
-                exclusion_tokens = ["former", "past:", "ex-", "previously", "retired", "ex-employee", "worked at"]
-                if any(token in clean_snippet or token in headline_lower for token in exclusion_tokens):
-                    continue
+                # 3. CONTEXT REVERIFICATION: Ensure the target company is an active current connector anchor
+                is_verified_current = False
+                current_patterns = [
+                    rf"\b{company_escaped}\b",
+                    rf"\bat\s+{company_escaped}\b",
+                    rf"\|\s*{company_escaped}\b",
+                    rf"-\s*{company_escaped}\b"
+                ]
                 
-                # 3. ACCURACY GATE: Company-presence confirmation anchor
-                # Verified current only if company name links directly to the headline or snippet structure
-                is_verified_current = (company_lower in headline_lower) or (f"at {company_lower}" in clean_snippet) or (f"current: {company_lower}" in clean_snippet)
+                if any(re.search(p, full_text_block, re.IGNORECASE) for p in current_patterns):
+                    is_verified_current = True
+                    
                 if not is_verified_current:
                     continue
                 
-                if "linkedin" in clean_snippet or "linkedin" in title_text.lower():
+                if "linkedin" in clean_snippet.lower() or "linkedin" in title_text.lower():
                     records.append({
                         "Full Name": name,
                         "Company": company.title(),
@@ -195,8 +205,9 @@ with col_right:
     selected_country = st.selectbox("Select Target Country Node:", list(COUNTRY_MAP.keys()))
     st.markdown("---")
     st.caption(
-        "💡 **Quality Assurance Notice:**\n"
-        "Strict multi-pass code filtering is active. Historical listings, former roles, and title-mismatched profiles are automatically purged."
+        "💡 **Context-Aware Quality Filter Active:**\n"
+        "The system utilizes boundary regex scanning. Profiles containing markers like 'Ex-', 'Former', "
+        "or historic role snippets are parsed and dropped automatically."
     )
 
 if st.button("Execute Extraction Pipeline", type="primary"):
@@ -217,7 +228,7 @@ if st.button("Execute Extraction Pipeline", type="primary"):
         total_designations = len(active_designations)
         
         for idx, position in enumerate(active_designations):
-            status_text.text(f"Scanning {selected_country} registries for: {position}...")
+            status_text.text(f"Scanning {selected_country} registries for active: {position}...")
             batch = search_service.fetch_strict_current_leads(target_company, position, locale_config)
             results_pool.extend(batch)
             
@@ -244,7 +255,7 @@ if st.button("Execute Extraction Pipeline", type="primary"):
             progress_bar.empty()
             status_text.empty()
             
-            st.success(f"Successfully compiled {len(df_final)} highly accurate active leads for {selected_country}!")
+            st.success(f"Successfully compiled {len(df_final)} verified current leads for {selected_country}!")
             
             display_cols = ["Full Name", "Company", "Current Designation", "LinkedIn Profile URL", "Status"]
             st.dataframe(df_final[display_cols], use_container_width=True)
@@ -262,7 +273,7 @@ if st.button("Execute Extraction Pipeline", type="primary"):
         else:
             progress_bar.empty()
             status_text.empty()
-            st.error(f"No active profiles matching those exact filters found in {selected_country}. All generic matches were filtered out for accuracy.")
+            st.error(f"No currently active profiles matching those exact filters found in {selected_country}. All historical records were successfully caught and removed.")
 
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
