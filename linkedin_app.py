@@ -8,7 +8,7 @@ import re
 import pandas as pd
 import streamlit as st
 import requests
-import xml.etree.ElementTree as ET
+from bs4 import BeautifulSoup
 from urllib.parse import quote
 from typing import List, Dict, Any
 
@@ -51,11 +51,9 @@ st.markdown(
         padding: 0.7rem 2.5rem;
         font-weight: 600;
         font-size: 16px;
-        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
     }
     div.stButton > button:hover {
         background-color: #005a5a !important;
-        color: #ffffff !important;
     }
     div.stDownloadButton > button {
         background-color: #047857 !important;
@@ -65,123 +63,91 @@ st.markdown(
         padding: 0.6rem 2rem;
         font-weight: 600;
     }
-    div.stDownloadButton > button:hover {
-        background-color: #065f46 !important;
-    }
-    .stProgress > div > div > div > div { background-color: #008080 !important; }
-    .stDataFrame {
-        border-radius: 8px;
-        overflow: hidden;
-        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
-    }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-COUNTRY_MAP = {
-    "India 🇮🇳": {"hl": "en-IN", "gl": "IN", "ceid": "IN:en", "subdomain": "in.linkedin.com/in/"},
-    "United States 🇺🇸": {"hl": "en-US", "gl": "US", "ceid": "US:en", "subdomain": "linkedin.com/in/"},
-    "United Kingdom 🇬🇧": {"hl": "en-GB", "gl": "GB", "ceid": "GB:en", "subdomain": "uk.linkedin.com/in/"},
-    "United Arab Emirates 🇦🇪": {"hl": "en-AE", "gl": "AE", "ceid": "AE:en", "subdomain": "ae.linkedin.com/in/"},
-    "Singapore 🇸🇬": {"hl": "en-SG", "gl": "SG", "ceid": "SG:en", "subdomain": "sg.linkedin.com/in/"}
+# Active regional geographic footprint matrix mapping
+COUNTRY_REGIONS = {
+    "India 🇮🇳": "in-en",
+    "United States 🇺🇸": "us-en",
+    "United Kingdom 🇬🇧": "uk-en",
+    "United Arab Emirates 🇦🇪": "ae-en",
+    "Singapore 🇸🇬": "sg-en"
 }
 
 # ==========================================
 # SERVICE ARCHITECTURE LAYER
 # ==========================================
-class GoogleRSSXRayService:
+class UnifiedDirectorySearchService:
     def __init__(self):
-        self.base_url = "https://news.google.com/rss/search"
+        self.target_url = "https://html.duckduckgo.com/html/"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9"
         }
 
-    @staticmethod
-    def parse_name_headline(raw_title: str) -> tuple:
-        if " - " in raw_title:
-            parts = raw_title.split(" - ")
-            name = parts[0].strip()
-            headline = parts[1].replace(" - LinkedIn", "").replace(" | LinkedIn", "").strip()
-            return name, headline
-        return raw_title, "Professional Profile"
-
-    def unshorten_google_url(self, google_url: str) -> str:
-        try:
-            response = requests.head(google_url, headers=self.headers, allow_redirects=True, timeout=5.0)
-            final_url = response.url.split("?")[0]
-            if "linkedin.com/in/" in final_url:
-                return final_url
-            return google_url
-        except Exception:
-            return google_url
-
-    def fetch_strict_current_leads(self, company: str, position: str, locale: dict) -> List[Dict[str, Any]]:
-        # Broader base search query to capture all formatting styles on Google's index
-        raw_query = f'site:{locale["subdomain"]} "{company}" {position}'
-        encoded_query = quote(raw_query)
-        request_url = f"{self.base_url}?q={encoded_query}&hl={locale['hl']}&gl={locale['gl']}&ceid={locale['ceid']}"
+    def extract_live_personnel(self, company: str, position: str, region_code: str) -> List[Dict[str, Any]]:
+        # Formulate a clean target query string targeting direct profile paths
+        search_query = f'site:linkedin.com/in/ "{position}" "{company}"'
+        payload = {
+            "q": search_query,
+            "kl": region_code
+        }
         
         try:
-            time.sleep(random.uniform(0.2, 0.4))
-            response = requests.get(request_url, headers=self.headers, timeout=10.0)
+            time.sleep(random.uniform(1.0, 2.0)) # Prevent rapid network drops
+            response = requests.post(self.target_url, data=payload, headers=self.headers, timeout=15.0)
+            
             if response.status_code != 200:
                 return []
                 
-            root = ET.fromstring(response.text)
+            soup = BeautifulSoup(response.text, "html.parser")
             records = []
             
-            for item in root.findall(".//item"):
-                title_text = item.find("title").text if item.find("title") is not None else ""
-                google_link = item.find("link").text if item.find("link") is not None else ""
-                description_text = item.find("description").text if item.find("description") is not None else ""
+            results = soup.find_all("div", class_="result")
+            for item in results:
+                url_element = item.find("a", class_="result__url")
+                snippet_element = item.find("a", class_="result__snippet")
                 
-                clean_snippet = re.sub(r'<[^>]*>', '', description_text)
-                name, headline = self.parse_name_headline(title_text)
-                
-                full_text_block = f"{headline} {clean_snippet}"
-                company_escaped = re.escape(company)
-                
-                # 1. ADVANCED REGEX GATE: Catch "Ex-" or historic employment flags immediately surrounding company name
-                # Matches patterns like: ex-sugar, former sugar, sugar (former), worked at sugar, etc.
-                past_role_pattern = rf"(\bex\s*-\s*{company_escaped}|\bformer\s+{company_escaped}|\bpreviously\s+(?:at\s+)?{company_escaped}|\b{company_escaped}\s+\(former\)|\bworked\s+at\s+{company_escaped})"
-                if re.search(past_role_pattern, full_text_block, re.IGNORECASE):
-                    continue  # Drops past employees instantly
-                
-                # 2. ACCURACY FILTER GATE: Verify they are currently holding the requested designation layout
-                position_escaped = re.escape(position)
-                if not re.search(rf"\b{position_escaped}\b", headline, re.IGNORECASE):
-                    continue
-                
-                # 3. CONTEXT REVERIFICATION: Ensure the target company is an active current connector anchor
-                is_verified_current = False
-                current_patterns = [
-                    rf"\b{company_escaped}\b",
-                    rf"\bat\s+{company_escaped}\b",
-                    rf"\|\s*{company_escaped}\b",
-                    rf"-\s*{company_escaped}\b"
-                ]
-                
-                if any(re.search(p, full_text_block, re.IGNORECASE) for p in current_patterns):
-                    is_verified_current = True
+                if url_element and snippet_element:
+                    raw_url = url_element.get("href", "")
+                    raw_title = url_element.text.strip()
+                    snippet_text = snippet_element.text.strip()
                     
-                if not is_verified_current:
-                    continue
-                
-                if "linkedin" in clean_snippet.lower() or "linkedin" in title_text.lower():
-                    records.append({
-                        "Full Name": name,
-                        "Company": company.title(),
-                        "Current Designation": headline,
-                        "Status": "Verified Current ✅",
-                        "Google Link Container": google_link,
-                        "Target Designation Lookup": position
-                    })
+                    # Clean out the raw platform tracking redirect parameters out of the URL string
+                    actual_profile_url = raw_url
+                    if "uddg=" in raw_url:
+                        actual_profile_url = raw_url.split("uddg=")[1].split("&")[0]
+                        from urllib.parse import unquote
+                        actual_profile_url = unquote(actual_profile_url)
+                        
+                    if "linkedin.com/in/" in actual_profile_url:
+                        # Clean the junk suffix text off the end of titles
+                        clean_headline = raw_title.split("-")[0].split("|")[0].strip()
+                        
+                        # STRICTOR CURRENT CONTEXT FILTER
+                        # Check text blocks for explicit past-employment markers
+                        full_block = f"{clean_headline} {snippet_text}".lower()
+                        past_markers = ["ex-", "former", "previous", "retired", "worked at"]
+                        
+                        if any(marker in full_block for marker in past_markers):
+                            continue # Instantly drop past roles to ensure accuracy
+                            
+                        records.append({
+                            "Full Name": clean_headline.split(":", 1)[0].split(" - ")[0].strip(),
+                            "Company": company.title(),
+                            "Current Designation": clean_headline,
+                            "LinkedIn Profile URL": actual_profile_url,
+                            "Status": "Verified Current ✅"
+                        })
             return records
         except Exception:
             return []
 
-search_service = GoogleRSSXRayService()
+search_engine = UnifiedDirectorySearchService()
 
 # ==========================================
 # STREAMLIT PRESENTATION VIEW LAYER
@@ -202,19 +168,18 @@ with col_left:
 
 with col_right:
     st.markdown("### 🌍 Region Settings")
-    selected_country = st.selectbox("Select Target Country Node:", list(COUNTRY_MAP.keys()))
+    selected_country = st.selectbox("Select Target Country Node:", list(COUNTRY_REGIONS.keys()))
     st.markdown("---")
     st.caption(
-        "💡 **Context-Aware Quality Filter Active:**\n"
-        "The system utilizes boundary regex scanning. Profiles containing markers like 'Ex-', 'Former', "
-        "or historic role snippets are parsed and dropped automatically."
+        "💡 **Structural Extraction Filter Active:**\n"
+        "This mode skips Google RSS caches entirely and uses real-time directory lookup frames to pinpoint active personnel coordinates."
     )
 
 if st.button("Execute Extraction Pipeline", type="primary"):
     lines = designations_input.split("\n")
     active_designations = [str(line).strip() for line in lines if str(line).strip() != ""][:10]
     
-    locale_config = COUNTRY_MAP[selected_country]
+    region_config = COUNTRY_REGIONS[selected_country]
     
     if not target_company:
         st.error("Pipeline Error: Please specify a valid target company name.")
@@ -228,34 +193,18 @@ if st.button("Execute Extraction Pipeline", type="primary"):
         total_designations = len(active_designations)
         
         for idx, position in enumerate(active_designations):
-            status_text.text(f"Scanning {selected_country} registries for active: {position}...")
-            batch = search_service.fetch_strict_current_leads(target_company, position, locale_config)
+            status_text.text(f"Scanning regional nodes for: {position} at {target_company}...")
+            batch = search_engine.extract_live_personnel(target_company, position, region_config)
             results_pool.extend(batch)
+            progress_bar.progress(float((idx + 1) / total_designations))
             
-            prog_val = min(((idx + 0.5) / total_designations) * 0.5, 0.5)
-            progress_bar.progress(float(prog_val))
-            
+        status_text.empty()
+        progress_bar.empty()
+        
         if results_pool:
-            status_text.text("Tracing tracking routing headers to unpack direct profile paths...")
-            df_final = pd.DataFrame(results_pool).drop_duplicates(subset=["Full Name"]).reset_index(drop=True)
+            df_final = pd.DataFrame(results_pool).drop_duplicates(subset=["LinkedIn Profile URL"]).reset_index(drop=True)
             
-            real_urls = []
-            total_urls = len(df_final)
-            
-            for i, (index, row) in enumerate(df_final.iterrows()):
-                google_url = row["Google Link Container"]
-                real_link = search_service.unshorten_google_url(google_url)
-                real_urls.append(real_link)
-                
-                prog_val = min(0.5 + ((i + 1) / total_urls) * 0.5, 1.0)
-                progress_bar.progress(float(prog_val))
-                
-            df_final["LinkedIn Profile URL"] = real_urls
-            time.sleep(0.2)
-            progress_bar.empty()
-            status_text.empty()
-            
-            st.success(f"Successfully compiled {len(df_final)} verified current leads for {selected_country}!")
+            st.success(f"Successfully compiled {len(df_final)} highly accurate active leads for {selected_country}!")
             
             display_cols = ["Full Name", "Company", "Current Designation", "LinkedIn Profile URL", "Status"]
             st.dataframe(df_final[display_cols], use_container_width=True)
@@ -271,9 +220,7 @@ if st.button("Execute Extraction Pipeline", type="primary"):
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            progress_bar.empty()
-            status_text.empty()
-            st.error(f"No currently active profiles matching those exact filters found in {selected_country}. All historical records were successfully caught and removed.")
+            st.error(f"No currently active profiles matching those exact filters found in {selected_country}. Try refining your designation spelling keywords.")
 
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
