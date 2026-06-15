@@ -188,7 +188,7 @@ with col_left:
     
     st.markdown("##### Designations Target Matrix (Max 10)")
     
-    # CRITICAL FIX: Instantiate table variables inside session state once to prevent re-rendering crashes
+    # Initialize the structure inside state securely EXACTLY ONCE
     if "df_designations_matrix" not in st.session_state:
         st.session_state.df_designations_matrix = pd.DataFrame([
             {"Designations": "Product Manager"},
@@ -196,8 +196,8 @@ with col_left:
             {"Designations": ""}
         ])
     
-    # Maintain user updates cleanly across render cycles
-    st.session_state.df_designations_matrix = st.data_editor(
+    # FIXED: Direct outputs to a clean local dataframe variable to resolve rendering loop crash
+    edited_output_df = st.data_editor(
         st.session_state.df_designations_matrix, 
         num_rows="dynamic", 
         max_rows=10, 
@@ -216,8 +216,8 @@ with col_right:
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
-    # Safely extract rows from our persistent dataframe
-    raw_rows = st.session_state.df_designations_matrix["Designations"].dropna().tolist()
+    # FIXED: Safely pull rows from our un-deadlocked local variable instead
+    raw_rows = edited_output_df["Designations"].dropna().tolist()
     active_designations = [str(d).strip() for d in raw_rows if str(d).strip() != ""]
     
     if not target_company:
@@ -261,8 +261,8 @@ if st.button("Run Personnel Target Search", type="primary"):
                 # Compile multi-sheet clean excel data workspace memory streams
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-                    df_final.to_excel(writer, index=False, sheet_name="Active Verified Leads")
-                    df_clean.to_excel(writer, index=False, sheet_name="All Extracted Records")
+                    df_final.to_excel(writer, sheet_name="Active Verified Leads", index=False)
+                    df_clean.to_excel(writer, sheet_name="All Extracted Records", index=False)
                     
                 st.download_button(
                     label="Download Verified Leads Lead Sheet",
