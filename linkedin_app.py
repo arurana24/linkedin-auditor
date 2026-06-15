@@ -56,13 +56,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Geographic Perspective Parameter Map Matrix
+# FIXED: Added the exact target LinkedIn subdomain filter per country zone
 COUNTRY_MAP = {
-    "India 🇮🇳": {"hl": "en-IN", "gl": "IN", "ceid": "IN:en"},
-    "United States 🇺🇸": {"hl": "en-US", "gl": "US", "ceid": "US:en"},
-    "United Kingdom 🇬🇧": {"hl": "en-GB", "gl": "GB", "ceid": "GB:en"},
-    "United Arab Emirates 🇦🇪": {"hl": "en-AE", "gl": "AE", "ceid": "AE:en"},
-    "Singapore 🇸🇬": {"hl": "en-SG", "gl": "SG", "ceid": "SG:en"}
+    "India 🇮🇳": {"hl": "en-IN", "gl": "IN", "ceid": "IN:en", "subdomain": "in.linkedin.com/in/"},
+    "United States 🇺🇸": {"hl": "en-US", "gl": "US", "ceid": "US:en", "subdomain": "linkedin.com/in/"},
+    "United Kingdom 🇬🇧": {"hl": "en-GB", "gl": "GB", "ceid": "GB:en", "subdomain": "uk.linkedin.com/in/"},
+    "United Arab Emirates 🇦🇪": {"hl": "en-AE", "gl": "AE", "ceid": "AE:en", "subdomain": "ae.linkedin.com/in/"},
+    "Singapore 🇸🇬": {"hl": "en-SG", "gl": "SG", "ceid": "SG:en", "subdomain": "sg.linkedin.com/in/"}
 }
 
 # ==========================================
@@ -93,9 +93,8 @@ class GoogleRSSXRayService:
         Follows the tracking link wrapper to extract the native, direct LinkedIn profile URL.
         """
         try:
-            # Execute a lightweight HEAD request to trace redirect headers instantly
             response = requests.head(google_url, headers=self.headers, allow_redirects=True, timeout=5.0)
-            final_url = response.url.split("?")[0] # Clear parameters
+            final_url = response.url.split("?")[0]
             if "linkedin.com/in/" in final_url:
                 return final_url
             return google_url
@@ -103,8 +102,8 @@ class GoogleRSSXRayService:
             return google_url
 
     def fetch_country_targeted_leads(self, company: str, position: str, locale: dict) -> List[Dict[str, Any]]:
-        # Enforce target parameters directly inside the core query string
-        raw_query = f'site:linkedin.com/in/ "{company}" "{position}"'
+        # FIXED: Generates the search query dynamically using the specific country's subdomain prefix
+        raw_query = f'site:{locale["subdomain"]} "{company}" "{position}"'
         encoded_query = quote(raw_query)
         
         request_url = f"{self.base_url}?q={encoded_query}&hl={locale['hl']}&gl={locale['gl']}&ceid={locale['ceid']}"
@@ -126,7 +125,6 @@ class GoogleRSSXRayService:
                 clean_snippet = re.sub(r'<[^>]*>', '', description_text).lower()
                 name, headline = self.parse_name_headline(title_text)
                 
-                # REVERIFICATION LOGIC PASS
                 # Check for active context matches while filtering out clear past-employment markers
                 company_lower = company.lower()
                 is_current = False
@@ -177,8 +175,8 @@ with col_right:
     st.markdown("### 2. Geographic Filters")
     selected_country = st.selectbox("Select Target Country Perspective:", list(COUNTRY_MAP.keys()))
     st.info(
-        "🛡 *System Infrastructure Status: Open Proxy Active*\n"
-        "This tool automatically traces underlying header networks to turn tracking strings into clean LinkedIn profile paths."
+        "🛡️ **System Infrastructure Status: Open Proxy Active**\n"
+        "This tool automatically isolates localized profile subdomains dynamically based on your chosen location drop-down menu selection."
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
@@ -206,7 +204,6 @@ if st.button("Run Personnel Target Search", type="primary"):
             status_text.text("Unpacking tracking headers to extract true LinkedIn profile URLs...")
             df_final = pd.DataFrame(results_pool).drop_duplicates(subset=["Professional Name"])
             
-            # CRITICAL LOOP FIX: Accessing records via safe string keys inside iterrows loop
             real_urls = []
             url_progress = st.progress(0)
             total_urls = len(df_final)
@@ -221,7 +218,7 @@ if st.button("Run Personnel Target Search", type="primary"):
             url_progress.empty()
             status_text.empty()
             
-            st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} unique corporate leads.")
+            st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} unique corporate leads for {selected_country}.")
             
             display_cols = ["Professional Name", "Current Profile Headline", "True LinkedIn Profile URL", "Employment Verification", "Target Designation"]
             st.dataframe(df_final[display_cols], use_container_width=True)
@@ -238,7 +235,7 @@ if st.button("Run Personnel Target Search", type="primary"):
             )
         else:
             status_text.empty()
-            st.error("No data streams could be parsed from regional indexes. Verify input parameters.")
+            st.error(f"No data streams could be parsed from the regional indexes for {selected_country}. Verify input parameters.")
 
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
