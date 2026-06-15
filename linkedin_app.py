@@ -121,16 +121,17 @@ with col_left:
     
     st.markdown("##### Designations List (Max 10)")
     
-    # Clean fallback dataframe layout initialization
-    default_df = pd.DataFrame([
-        {"Designations": "Product Manager"},
-        {"Designations": "Software Engineer"},
-        {"Designations": ""}
-    ])
+    # CRITICAL FIX: Initialize data in session state ONCE so it isn't reset on reruns
+    if "df_designations" not in st.session_state:
+        st.session_state.df_designations = pd.DataFrame([
+            {"Designations": "Product Manager"},
+            {"Designations": "Software Engineer"},
+            {"Designations": ""}
+        ])
     
-    # Render data_editor cleanly without mapping state assignments around it
-    edited_df = st.data_editor(
-        default_df, 
+    # Render and capture updates using the same persistent session state token object
+    st.session_state.df_designations = st.data_editor(
+        st.session_state.df_designations, 
         num_rows="dynamic", 
         max_rows=10, 
         use_container_width=True,
@@ -147,8 +148,8 @@ with col_right:
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
-    # Extract row items directly from the active widget instance safely during button submit execution
-    raw_designations = edited_df["Designations"].dropna().tolist()
+    # Safely pull the active lines from our persistent session state container
+    raw_designations = st.session_state.df_designations["Designations"].dropna().tolist()
     active_designations = [str(d).strip() for d in raw_designations if str(d).strip() != ""]
     
     if not target_company:
@@ -158,17 +159,17 @@ if st.button("Run Personnel Target Search", type="primary"):
     else:
         all_results_pool = []
         p_bar = st.progress(0)
-        status_text = st.empty()
+        st_text = st.empty()
         
         total_steps = len(active_designations)
         
         for idx, position in enumerate(active_designations):
-            status_text.text(f"Querying indexing logs for: {position} at {target_company}...")
+            st_text.text(f"Querying indexing logs for: {position} at {target_company}...")
             records = search_linkedin_professionals(target_company, position, result_depth)
             all_results_pool.extend(records)
             p_bar.progress((idx + 1) / total_steps)
             
-        status_text.empty()
+        st_text.empty()
         
         if all_results_pool:
             df_linkedin = pd.DataFrame(all_results_pool)
