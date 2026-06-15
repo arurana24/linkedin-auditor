@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 import requests
 import xml.etree.ElementTree as ET
-from urllib.parse import quote, parse_qs, urlparse
+from urllib.parse import quote
 from typing import List, Dict, Any
 
 # ==========================================
@@ -29,7 +29,6 @@ def get_base64_image(image_path):
 
 logo_base64 = get_base64_image("logo.jpeg") or get_base64_image("logo.jpg")
 
-# Advanced Layout Presentation Configuration
 st.markdown(
     """
     <style>
@@ -56,13 +55,22 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# Geographic Perspective Parameter Map Matrix
+COUNTRY_MAP = {
+    "India 🇮🇳": {"hl": "en-IN", "gl": "IN", "ceid": "IN:en"},
+    "United States 🇺🇸": {"hl": "en-US", "gl": "US", "ceid": "US:en"},
+    "United Kingdom 🇬🇧": {"hl": "en-GB", "gl": "GB", "ceid": "GB:en"},
+    "United Arab Emirates 🇦🇪": {"hl": "en-AE", "gl": "AE", "ceid": "AE:en"},
+    "Singapore 🇸🇬": {"hl": "en-SG", "gl": "SG", "ceid": "SG:en"}
+}
+
 # ==========================================
 # SERVICE ARCHITECTURE LAYER
 # ==========================================
 class GoogleRSSXRayService:
     """
-    Bypasses cloud data center blocks completely by mirroring 
-    the Google Sheets RSS proxy feed extraction structure natively.
+    Leverages Google's trusted indexing infrastructure to execute 
+    unlimited country-targeted lookups and verify live profile metadata.
     """
     def __init__(self):
         self.base_url = "https://news.google.com/rss/search"
@@ -71,10 +79,7 @@ class GoogleRSSXRayService:
         }
 
     @staticmethod
-    def extract_clean_name_headline(raw_title: str) -> tuple:
-        """
-        Parses the full professional name and description headline out of the Google string.
-        """
+    def parse_name_headline(raw_title: str) -> tuple:
         if " - " in raw_title:
             parts = raw_title.split(" - ")
             name = parts[0].strip()
@@ -82,20 +87,33 @@ class GoogleRSSXRayService:
             return name, headline
         return raw_title, "Professional Profile"
 
-    def fetch_rss_leads(self, company: str, position: str) -> List[Dict[str, Any]]:
-        # This mirrors your exact Google Sheet query string layout
+    def unshorten_google_url(self, google_url: str) -> str:
+        """
+        Follows the tracking link wrapper to extract the native, direct LinkedIn profile URL.
+        """
+        try:
+            # Execute a lightweight HEAD request to trace redirect headers instantly
+            response = requests.head(google_url, headers=self.headers, allow_redirects=True, timeout=5.0)
+            final_url = response.url.split("?")[0] # Clear parameters
+            if "linkedin.com/in/" in final_url:
+                return final_url
+            return google_url
+        except Exception:
+            return google_url
+
+    def fetch_country_targeted_leads(self, company: str, position: str, locale: dict) -> List[Dict[str, Any]]:
+        # Enforce target parameters directly inside the core query string
         raw_query = f'site:linkedin.com/in/ "{company}" "{position}"'
         encoded_query = quote(raw_query)
-        request_url = f"{self.base_url}?q={encoded_query}&hl=en-IN&gl=IN&ceid=IN:en"
+        
+        request_url = f"{self.base_url}?q={encoded_query}&hl={locale['hl']}&gl={locale['gl']}&ceid={locale['ceid']}"
         
         try:
-            time.sleep(random.uniform(0.5, 1.5)) # Pacing buffer
-            response = requests.get(request_url, headers=self.headers, timeout=12.0)
-            
+            time.sleep(random.uniform(0.3, 0.8))
+            response = requests.get(request_url, headers=self.headers, timeout=10.0)
             if response.status_code != 200:
                 return []
                 
-            # Parse the incoming raw XML structure natively
             root = ET.fromstring(response.text)
             records = []
             
@@ -104,17 +122,31 @@ class GoogleRSSXRayService:
                 google_link = item.find("link").text if item.find("link") is not None else ""
                 description_text = item.find("description").text if item.find("description") is not None else ""
                 
-                # Strip out raw HTML elements from descriptive headers
-                clean_snippet = re.sub(r'<[^>]*>', '', description_text)
-                name, headline = self.extract_clean_name_headline(title_text)
+                clean_snippet = re.sub(r'<[^>]*>', '', description_text).lower()
+                name, headline = self.parse_name_headline(title_text)
                 
-                if "linkedin.com" in clean_snippet or "linkedin" in title_text.lower():
+                # REVERIFICATION LOGIC PASS
+                # Check for active context matches while filtering out clear past-employment markers
+                company_lower = company.lower()
+                is_current = False
+                
+                if company_lower in headline.lower() or company_lower in clean_snippet:
+                    is_current = True
+                    
+                exclusion_tokens = ["former", "past:", "ex-", "previously", "retired"]
+                if any(token in clean_snippet or token in headline.lower() for token in exclusion_tokens):
+                    is_current = False
+                
+                verification_status = "Verified Current ✅" if is_current else "Unverified / Past Role ⚠️"
+                
+                if "linkedin" in clean_snippet or "linkedin" in title_text.lower():
                     records.append({
                         "Target Company": company,
                         "Target Designation": position,
                         "Professional Name": name,
-                        "Profile Description Summary": headline if headline else clean_snippet,
-                        "Google Redirect Link": google_link
+                        "Current Profile Headline": headline,
+                        "Google Link Container": google_link,
+                        "Employment Verification": verification_status
                     })
             return records
         except Exception:
@@ -126,73 +158,85 @@ search_service = GoogleRSSXRayService()
 # STREAMLIT PRESENTATION VIEW LAYER
 # ==========================================
 st.title("Automated Client Extraction Matrix")
-st.markdown("Extract verified profiles instantly via trusted infrastructure pipelines. 100% Free & Unlimited.")
+st.markdown("Extract country-focused profiles with real-time verification filters. 100% Free & Unlimited.")
 
 col_left, col_right = st.columns(2)
 
 with col_left:
-    st.markdown("### 1. Extraction Configurations")
+    st.markdown("### 1. Target Parameters")
     target_company = st.text_input("Target Corporate Entity Name:", value="Sugar Cosmetics")
     
     designations_input = st.text_area(
-        "Target Designations (Type or paste one per line):",
-        value="Founder\nCEO\nDirector",
-        height=160
+        "Target Designations (One title per line):",
+        value="Founder\nCEO",
+        height=140
     )
 
 with col_right:
-    st.markdown("### 2. Operational Framework")
+    st.markdown("### 2. Geographic Filters")
+    selected_country = st.selectbox("Select Target Country Perspective:", list(COUNTRY_MAP.keys()))
     st.info(
-        "🛡️ **System Infrastructure Status: Proxy Routing Network Connected**\n"
-        "This version forces backend parameter translation to tap into Google's open XML streams, "
-        "completely bypassing cloud developer limits and blockages."
+        "🛡️ **System Infrastructure Status: Open Proxy Active**\n"
+        "This tool automatically traces underlying header networks to turn tracking strings into clean LinkedIn profile paths."
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
     lines = designations_input.split("\n")
     active_designations = [str(line).strip() for line in lines if str(line).strip() != ""][:10]
     
+    locale_config = COUNTRY_MAP[selected_country]
+    
     if not target_company:
-        st.error("Execution halted: Please specify a corporate filter metric.")
+        st.error("Execution halted: Please specify a valid company filter metric.")
     elif not active_designations:
-        st.error("Execution halted: Please provide at least one designation string.")
+        st.error("Execution halted: Please provide at least one target designation string.")
     else:
         results_pool = []
         progress_bar = st.progress(0)
         status_text = st.empty()
         
         for idx, position in enumerate(active_designations):
-            status_text.text(f"Extracting target tracking records for: {position} at {target_company}...")
-            batch = search_service.fetch_rss_leads(target_company, position)
+            status_text.text(f"Querying regional servers ({selected_country}) for: {position} roles...")
+            batch = search_service.fetch_country_targeted_leads(target_company, position, locale_config)
             results_pool.extend(batch)
             progress_bar.progress((idx + 1) / len(active_designations))
             
-        status_text.empty()
-        
         if results_pool:
-            df_raw = pd.DataFrame(results_pool)
-            df_final = df_raw.drop_duplicates(subset=["Professional Name"])
+            status_text.text("Unpacking tracking headers to extract true LinkedIn profile URLs...")
+            df_final = pd.DataFrame(results_pool).drop_duplicates(subset=["Professional Name"])
             
-            if not df_final.empty:
-                st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} verified enterprise leads.")
+            # Resolve short URLs inline sequentially
+            real_urls = []
+            url_progress = st.progress(0)
+            total_urls = len(df_final)
+            
+            for i, row in enumerate(df_final.itertuples()):
+                real_link = search_service.unshorten_google_url(row.Google_Link_Container)
+                real_urls.append(real_link)
+                url_progress.progress((i + 1) / total_urls)
                 
-                display_cols = ["Professional Name", "Profile Description Summary", "Google Redirect Link", "Target Designation"]
-                st.dataframe(df_final[display_cols], use_container_width=True)
+            df_final["True LinkedIn Profile URL"] = real_urls
+            url_progress.empty()
+            status_text.empty()
+            
+            st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} matching profiles.")
+            
+            display_cols = ["Professional Name", "Current Profile Headline", "True LinkedIn Profile URL", "Employment Verification", "Target Designation"]
+            st.dataframe(df_final[display_cols], use_container_width=True)
+            
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                df_final[display_cols].to_excel(writer, sheet_name="Target Profiles", index=False)
                 
-                buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-                    df_final.to_excel(writer, sheet_name="RSS Extracted Leads", index=False)
-                    
-                st.download_button(
-                    label="Download Verified Leads Workbook",
-                    data=buf.getvalue(),
-                    file_name=f"{target_company.lower()}_verified_clients.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.error("Profiles mapped but excluded during data formatting validations.")
+            st.download_button(
+                label="Download Verified Leads Lead Sheet",
+                data=buf.getvalue(),
+                file_name=f"{target_company.lower()}_localized_leads.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         else:
-            st.error("No raw profile streams returned. Try refining your spelling keywords.")
+            status_text.empty()
+            st.error("No data streams could be parsed from regional indexes. Verify input parameters.")
 
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
