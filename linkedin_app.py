@@ -83,6 +83,36 @@ class GoogleRSSXRayService:
             return name, headline
         return raw_title, "Professional Profile"
 
+    @staticmethod
+    def extract_company_name(headline: str, snippet: str, target_company: str) -> str:
+        """
+        Uses pattern parsing to pull out the most likely current company name from text.
+        """
+        combined_text = f"{headline} {snippet}"
+        
+        # If it's already verified current, return the target company directly
+        if target_company.lower() in combined_text.lower():
+            return target_company.title()
+            
+        # Regex check for patterns like "at CompanyName", "Current: CompanyName", or "Role - CompanyName"
+        patterns = [
+            r"current:\s*([^·\-\|\.\n]+)",
+            r"\bat\s+([^·\-\|\.\n]+)",
+            r"-\s*([^·\-\|\.\n]+)",
+            r"\|\s*([^·\-\|\.\n]+)"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, combined_text, re.IGNORECASE)
+            if match:
+                extracted = match.group(1).strip()
+                # Clean up generic tail words
+                extracted = re.sub(r'\s*(linkedin|profile|india|united states|uk|unverified).*$', '', extracted, flags=re.IGNORECASE)
+                if len(extracted) > 2 and not any(x in extracted.lower() for x in ["former", "past", "manager", "director", "lead"]):
+                    return extracted.title()
+                    
+        return "Unknown / External Entity"
+
     def unshorten_google_url(self, google_url: str) -> str:
         try:
             response = requests.head(google_url, headers=self.headers, allow_redirects=True, timeout=5.0)
@@ -94,7 +124,6 @@ class GoogleRSSXRayService:
             return google_url
 
     def fetch_country_targeted_leads(self, company: str, position: str, locale: dict) -> List[Dict[str, Any]]:
-        # FIXED: Removed strict quote mandates and negative operators to bring back high profile volumes
         raw_query = f'site:{locale["subdomain"]} {company} {position}'
         encoded_query = quote(raw_query)
         
@@ -117,11 +146,9 @@ class GoogleRSSXRayService:
                 clean_snippet = re.sub(r'<[^>]*>', '', description_text).lower()
                 name, headline = self.parse_name_headline(title_text)
                 
-                # SMART SCANNING PASS
                 company_lower = company.lower()
                 headline_lower = headline.lower()
                 
-                # Check for explicit past role keywords
                 exclusion_tokens = ["former", "past:", "ex-", "previously", "retired", "ex-employee", "worked at"]
                 is_past_employee = any(token in clean_snippet or token in headline_lower for token in exclusion_tokens)
                 
@@ -135,12 +162,16 @@ class GoogleRSSXRayService:
                     verification_status = "Potential Match 🤔"
                     sort_order = 1
                 
+                # Run the new tracking text extractor pass
+                current_company_detected = self.extract_company_name(headline, clean_snippet, company)
+                
                 if "linkedin" in clean_snippet or "linkedin" in title_text.lower():
                     records.append({
                         "Target Company": company,
                         "Target Designation": position,
                         "Professional Name": name,
                         "Current Profile Headline": headline,
+                        "Detected Current Company": current_company_detected,
                         "Google Link Container": google_link,
                         "Employment Verification": verification_status,
                         "sort_order": sort_order
@@ -155,7 +186,7 @@ search_service = GoogleRSSXRayService()
 # STREAMLIT PRESENTATION VIEW LAYER
 # ==========================================
 st.title("Automated Client Extraction Matrix")
-st.markdown("Extract country-focused profiles with smart sorting alignment. 100% Free & Unlimited.")
+st.markdown("Extract country-focused profiles with smart sorting and automated company tracking. 100% Free.")
 
 col_left, col_right = st.columns(2)
 
@@ -173,8 +204,8 @@ with col_right:
     st.markdown("### 2. Geographic Filters")
     selected_country = st.selectbox("Select Target Country Perspective:", list(COUNTRY_MAP.keys()))
     st.info(
-        "🛡️ **System Infrastructure Status: Smart Priority Queue Active**\n"
-        "This version brings back full search volumes and automatically pushes Verified Current leads straight to the top of your list."
+        "🛡️ **System Infrastructure Status: Company Parsing Engine Active**\n"
+        "The system now auto-analyzes profile snippet strings to catch the specific organization names where potential leads are active right now."
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
@@ -202,7 +233,6 @@ if st.button("Run Personnel Target Search", type="primary"):
             status_text.text("Unpacking tracking headers to extract true LinkedIn profile URLs...")
             df_final = pd.DataFrame(results_pool).drop_duplicates(subset=["Professional Name"])
             
-            # Smart Sort: Verified Current (0) first, then Potential (1), then Past (2)
             df_final = df_final.sort_values(by="sort_order").reset_index(drop=True)
             
             real_urls = []
@@ -221,7 +251,8 @@ if st.button("Run Personnel Target Search", type="primary"):
             
             st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} matching profiles for {selected_country}.")
             
-            display_cols = ["Professional Name", "Current Profile Headline", "True LinkedIn Profile URL", "Employment Verification", "Target Designation"]
+            # Reordered to show the new "Detected Current Company" column right in your primary dashboard view!
+            display_cols = ["Professional Name", "Detected Current Company", "Current Profile Headline", "True LinkedIn Profile URL", "Employment Verification", "Target Designation"]
             st.dataframe(df_final[display_cols], use_container_width=True)
             
             buf = io.BytesIO()
