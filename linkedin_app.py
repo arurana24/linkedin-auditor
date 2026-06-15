@@ -67,7 +67,6 @@ def search_linkedin_professionals(company, position, num_results=10):
     Executes a clean, accountless X-Ray lookup query targeting active, 
     CURRENT employees by utilizing context-aware Boolean operators.
     """
-    # Adding "current" or "present" enforces live employment matching rules
     search_query = f'site:linkedin.com/in/ "{company}" "{position}" "current" -intitle:past'
     
     url = "https://www.googleapis.com/customsearch/v1"
@@ -79,7 +78,6 @@ def search_linkedin_professionals(company, position, num_results=10):
     }
     
     try:
-        # Prevent immediate API throttling
         time.sleep(random.uniform(0.2, 0.5))
         response = requests.get(url, params=params).json()
         search_items = response.get("items", [])
@@ -90,7 +88,6 @@ def search_linkedin_professionals(company, position, num_results=10):
             snippet = item.get("snippet", "")
             profile_url = item.get("link", "")
             
-            # Filter optimization line: skip if search engine explicitly pulls past tenure context indicators
             if "past:" in snippet.lower() or "former" in snippet.lower():
                 if f"current: {company.lower()}" not in snippet.lower() and f"at {company.lower()}" not in snippet.lower():
                     continue
@@ -124,23 +121,21 @@ with col_left:
     
     st.markdown("##### Designations List (Max 10)")
     
-    # SAFE INITIALIZATION: Initialize session state as a list of strings to fix the rendering crash
-    if "designations_list" not in st.session_state:
-        st.session_state.designations_list = ["Product Manager", "Software Engineer", ""]
-        
-    # Generate a clean local DataFrame snapshot for the editor widget
-    local_df = pd.DataFrame({"Designations": st.session_state.designations_list})
+    # Clean fallback dataframe layout initialization
+    default_df = pd.DataFrame([
+        {"Designations": "Product Manager"},
+        {"Designations": "Software Engineer"},
+        {"Designations": ""}
+    ])
     
+    # Render data_editor cleanly without mapping state assignments around it
     edited_df = st.data_editor(
-        local_df, 
+        default_df, 
         num_rows="dynamic", 
         max_rows=10, 
         use_container_width=True,
         key="designations_editor_instance"
     )
-    
-    # Save edits back to session state securely
-    st.session_state.designations_list = edited_df["Designations"].tolist()
 
 with col_right:
     st.markdown("### 2. Execution Toggles")
@@ -152,8 +147,9 @@ with col_right:
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
-    # Clean list parameters directly from your synchronized session state list
-    active_designations = [str(d).strip() for d in st.session_state.designations_list if str(d).strip() != ""]
+    # Extract row items directly from the active widget instance safely during button submit execution
+    raw_designations = edited_df["Designations"].dropna().tolist()
+    active_designations = [str(d).strip() for d in raw_designations if str(d).strip() != ""]
     
     if not target_company:
         st.error("Please provide a valid Target Company Name.")
