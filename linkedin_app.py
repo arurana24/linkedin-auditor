@@ -8,6 +8,7 @@ import base64
 import pandas as pd
 import streamlit as st
 import requests
+from typing import List, Dict, Any
 
 # ==========================================
 # SYSTEM SETUP & LOGGING
@@ -18,8 +19,12 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-GOOGLE_API_KEY = st.secrets["GOOGLE_SEARCH_API_KEY"]
-GOOGLE_CSE_ID = st.secrets["GOOGLE_CSE_CX_ID"]
+try:
+    GOOGLE_API_KEY = st.secrets["GOOGLE_SEARCH_API_KEY"]
+    GOOGLE_CSE_ID = st.secrets["GOOGLE_CSE_CX_ID"]
+except Exception as e:
+    st.error("System Configuration Error: Missing 'GOOGLE_SEARCH_API_KEY' or 'GOOGLE_CSE_CX_ID' in Streamlit Secrets.")
+    st.stop()
 
 def get_base64_image(image_path):
     if os.path.exists(image_path):
@@ -62,132 +67,213 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-def search_linkedin_professionals(company, position, num_results=10):
+# ==========================================
+# SERVICE ARCHITECTURE LAYER
+# ==========================================
+class LinkedInSearchService:
     """
-    Executes a clean, accountless X-Ray lookup query targeting active, 
-    CURRENT employees by utilizing context-aware Boolean operators.
+    Core Search Service Engine utilizing Google Custom Search API 
+    for decoupled, account-safe LinkedIn X-Ray queries.
     """
-    search_query = f'site:linkedin.com/in/ "{company}" "{position}" "current" -intitle:past'
-    
-    url = "https://www.googleapis.com/customsearch/v1"
-    params = {
-        "key": GOOGLE_API_KEY,
-        "cx": GOOGLE_CSE_ID,
-        "q": search_query,
-        "num": min(num_results, 10)
-    }
-    
-    try:
-        time.sleep(random.uniform(0.2, 0.5))
-        response = requests.get(url, params=params).json()
-        search_items = response.get("items", [])
-        
-        records = []
-        for item in search_items:
-            title = item.get("title", "")
-            snippet = item.get("snippet", "")
-            profile_url = item.get("link", "")
+    def __init__(self, api_key: str, cse_id: str):
+        self._api_key = api_key
+        self._cse_id = cse_id
+        self._base_url = "https://www.googleapis.com/customsearch/v1"
+
+    @staticmethod
+    def clean_profile_title(raw_title: str) -> tuple:
+        """
+        Parses professional names and title headlines from raw Google metadata string boundaries.
+        """
+        if not raw_title:
+            return "Unknown", "Unknown"
+        clean_string = re.sub(r'\s*[\s|│-]\s*LinkedIn\s*$', '', raw_title, flags=re.IGNORECASE)
+        parts = re.split(r'\s*[\s|│-]\s*', clean_string)
+        name = parts[0].strip() if len(parts) > 0 else "Unknown Name"
+        headline = parts[1].strip() if len(parts) > 1 else "Professional Profile"
+        return name, headline
+
+    @staticmethod
+    def calculate_confidence_score(snippet: str, headline: str, company: str, position: str) -> float:
+        """
+        Calculates a lead verification confidence score from 0.0 to 1.0 based on keywords.
+        """
+        score = 0.0
+        snippet_lower = snippet.lower()
+        headline_lower = headline.lower()
+        company_lower = company.lower()
+        pos_lower = position.lower()
+
+        if company_lower in headline_lower:
+            score += 0.45
+        elif f"at {company_lower}" in snippet_lower or "current:" in snippet_lower:
+            score += 0.35
+
+        if pos_lower in headline_lower or any(t in headline_lower for t in pos_lower.split()):
+            score += 0.35
+
+        # Penalize data if past-employment keywords are found
+        exclusion_tokens = ["former", "past:", "ex-", "previously", "retired", "student at"]
+        for token in exclusion_tokens:
+            if token in snippet_lower or token in headline_lower:
+                score -= 0.50
+
+        return max(0.0, min(float(score), 1.0))
+
+    def fetch_leads_for_designation(self, company: str, position: str, max_depth: int = 10) -> List[Dict[str, Any]]:
+        """
+        Queries Google's API index using rigorous boolean constraints to filter for active targets.
+        """
+        search_query = f'site:linkedin.com/in/ "{company}" "{position}" "current" -intitle:past'
+        params = {
+            "key": self._api_key,
+            "cx": self._cse_id,
+            "q": search_query,
+            "num": min(max(max_depth, 1), 10)
+        }
+
+        try:
+            time.sleep(random.uniform(0.2, 0.4))  # Human pacing element
+            response = requests.get(self._base_url, params=params, timeout=10.0)
             
-            if "past:" in snippet.lower() or "former" in snippet.lower():
-                if f"current: {company.lower()}" not in snippet.lower() and f"at {company.lower()}" not in snippet.lower():
-                    continue
+            if response.status_code == 429:
+                st.error("🚨 HTTP 429 Error: Your hourly or daily Google Search Quota is completely exhausted.")
+                return []
+            response.raise_for_status()
             
-            clean_name = title.split("-")[0].split("|")[0].strip()
-            
-            records.append({
-                "Target Company": company,
-                "Target Designation": position,
-                "Professional Name": clean_name,
-                "Current Title Line": title,
-                "Profile Link": profile_url,
-                "Public Snippet Summary": snippet
-            })
-        return records
-    except Exception as e:
-        logging.error(f"Search API Layer Connection Fail: {str(e)}")
-        return []
+            items = response.json().get("items", [])
+            records = []
+
+            for item in items:
+                raw_title = item.get("title", "")
+                snippet = item.get("snippet", "")
+                profile_url = item.get("link", "")
+
+                # Skip clearly stale past employment listings
+                if "former" in snippet.lower() or "past:" in snippet.lower():
+                    if f"at {company.lower()}" not in snippet.lower() and "current:" not in snippet.lower():
+                        continue
+
+                name, headline = self.clean_profile_title(raw_title)
+                confidence = self.calculate_confidence_score(snippet, headline, company, position)
+
+                records.append({
+                    "Target Company": company,
+                    "Target Designation": position,
+                    "Professional Name": name,
+                    "LinkedIn Profile Headline": headline,
+                    "Profile URL": profile_url,
+                    "Verification Snippet": snippet,
+                    "Lead Confidence Score": confidence
+                })
+            return records
+        except Exception as e:
+            logging.error(f"Network backend layer execution error: {str(e)}")
+            return []
+
+# Initialize search engine core interface
+search_service = LinkedInSearchService(api_key=GOOGLE_API_KEY, cse_id=GOOGLE_CSE_ID)
 
 # ==========================================
-# STREAMLIT USER INTERFACE VIEW LAYER
+# STREAMLIT PRESENTATION VIEW LAYER
 # ==========================================
 st.title("LinkedIn Personnel Identification Matrix")
-st.markdown("Extract public URLs and identifying details for current corporate professionals based on multi-designation targeting benchmarks.")
+st.markdown("Extract public URLs and matching verification metrics for **current** corporate employees across multiple designations simultaneously.")
 
 col_left, col_right = st.columns(2)
 
 with col_left:
     st.markdown("### 1. Target Configurations")
-    target_company = st.text_input("Target Company Name:", value="Google")
+    target_company = st.text_input("Target Corporate Entity Name:", value="Google")
     
-    st.markdown("##### Designations List (Max 10)")
+    st.markdown("##### Designations Target Matrix (Max 10)")
     
-    # CRITICAL FIX: Initialize data in session state ONCE so it isn't reset on reruns
-    if "df_designations" not in st.session_state:
-        st.session_state.df_designations = pd.DataFrame([
+    # CRITICAL FIX: Instantiate table variables inside session state once to prevent re-rendering crashes
+    if "df_designations_matrix" not in st.session_state:
+        st.session_state.df_designations_matrix = pd.DataFrame([
             {"Designations": "Product Manager"},
             {"Designations": "Software Engineer"},
             {"Designations": ""}
         ])
     
-    # Render and capture updates using the same persistent session state token object
-    st.session_state.df_designations = st.data_editor(
-        st.session_state.df_designations, 
+    # Maintain user updates cleanly across render cycles
+    st.session_state.df_designations_matrix = st.data_editor(
+        st.session_state.df_designations_matrix, 
         num_rows="dynamic", 
         max_rows=10, 
         use_container_width=True,
-        key="designations_editor_instance"
+        key="designations_table_instance"
     )
 
 with col_right:
     st.markdown("### 2. Execution Toggles")
-    result_depth = st.slider("Results Depth Limit per Designation:", min_value=5, max_value=10, value=10)
+    result_depth = st.slider("Max Result Rows per Designation:", min_value=5, max_value=10, value=10)
+    min_confidence = st.slider("Minimum Acceptable Lead Confidence Gate:", min_value=0.0, max_value=1.0, value=0.3, step=0.05)
     st.info(
-        "💡 **Query Processing Note:**\n"
-        "The engine applies Boolean string modifiers ('current' / '-intitle:past') "
-        "and checks result layouts to skip past employees automatically."
+        "💡 **Data Engineering Architecture Notice:**\n"
+        "This system filters out past employees using a dynamic confidence scoring model and regex filters, "
+        "completely bypassing standard LinkedIn scraping limits."
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
-    # Safely pull the active lines from our persistent session state container
-    raw_designations = st.session_state.df_designations["Designations"].dropna().tolist()
-    active_designations = [str(d).strip() for d in raw_designations if str(d).strip() != ""]
+    # Safely extract rows from our persistent dataframe
+    raw_rows = st.session_state.df_designations_matrix["Designations"].dropna().tolist()
+    active_designations = [str(d).strip() for d in raw_rows if str(d).strip() != ""]
     
     if not target_company:
-        st.error("Please provide a valid Target Company Name.")
+        st.error("Execution halted: Please provide a valid target corporate entity name.")
     elif not active_designations:
-        st.error("Please input at least one Designation in the table list.")
+        st.error("Execution halted: Please provide at least one target designation title attribute inside the matrix table.")
     else:
-        all_results_pool = []
-        p_bar = st.progress(0)
-        st_text = st.empty()
+        raw_results_pool = []
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
         total_steps = len(active_designations)
         
+        # Sequentially scan target fields
         for idx, position in enumerate(active_designations):
-            st_text.text(f"Querying indexing logs for: {position} at {target_company}...")
-            records = search_linkedin_professionals(target_company, position, result_depth)
-            all_results_pool.extend(records)
-            p_bar.progress((idx + 1) / total_steps)
+            status_text.text(f"Querying indexing servers for: {position} roles at {target_company}...")
+            batch_leads = search_service.fetch_leads_for_designation(target_company, position, result_depth)
+            raw_results_pool.extend(batch_leads)
+            progress_bar.progress((idx + 1) / total_steps)
             
-        st_text.empty()
+        status_text.empty()
         
-        if all_results_pool:
-            df_linkedin = pd.DataFrame(all_results_pool)
-            st.success(f"Successfully mapped {len(df_linkedin)} current professionals across your targets.")
-            st.dataframe(df_linkedin, use_container_width=True)
+        if raw_results_pool:
+            # --- ADVANCED POST-PROCESSING STAGES ---
+            df_raw = pd.DataFrame(raw_results_pool)
             
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-                df_linkedin.to_excel(writer, index=False, sheet_name="LinkedIn Current Leads")
+            # 1. Enforce strict profile URL deduplication (keeps the entry with the highest confidence score)
+            df_raw = df_raw.sort_values(by="Lead Confidence Score", ascending=False)
+            df_clean = df_raw.drop_duplicates(subset=["Profile URL"], keep="first")
+            
+            # 2. Filter out records that fall below our minimum confidence score threshold
+            df_final = df_clean[df_clean["Lead Confidence Score"] >= min_confidence]
+            
+            if not df_final.empty:
+                st.success(f"Pipeline executed successfully. Extracted and verified {len(df_final)} unique corporate profiles.")
                 
-            st.download_button(
-                label="Download Current LinkedIn Target Workbook",
-                data=buf.getvalue(),
-                file_name=f"{target_company.lower()}_current_personnel_leads.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                # Format view output column order cleanly
+                display_cols = ["Professional Name", "LinkedIn Profile Headline", "Profile URL", "Lead Confidence Score", "Target Designation"]
+                st.dataframe(df_final[display_cols].sort_values(by="Lead Confidence Score", ascending=False), use_container_width=True)
+                
+                # Compile multi-sheet clean excel data workspace memory streams
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                    df_final.to_excel(writer, index=False, sheet_name="Active Verified Leads")
+                    df_clean.to_excel(writer, index=False, sheet_name="All Extracted Records")
+                    
+                st.download_button(
+                    label="Download Verified Leads Lead Sheet",
+                    data=buf.getvalue(),
+                    file_name=f"{target_company.lower()}_verified_leads_matrix.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.error("All extracted leads were dropped because they fell below your Minimum Confidence Gate. Try lowering the slider filter.")
         else:
-            st.error("No active current records matched your specific filter targets.")
+            st.error("No data could be indexed from the public search vectors. Check your corporate search term spelling or API key limits.")
 
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
