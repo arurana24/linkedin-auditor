@@ -149,7 +149,6 @@ class LinkedInSearchService:
                 snippet = item.get("snippet", "")
                 profile_url = item.get("link", "")
 
-                # Skip clearly stale past employment listings
                 if "former" in snippet.lower() or "past:" in snippet.lower():
                     if f"at {company.lower()}" not in snippet.lower() and "current:" not in snippet.lower():
                         continue
@@ -186,23 +185,12 @@ with col_left:
     st.markdown("### 1. Target Configurations")
     target_company = st.text_input("Target Corporate Entity Name:", value="Google")
     
-    st.markdown("##### Designations Target Matrix (Max 10)")
-    
-    # Initialize the structure inside state securely EXACTLY ONCE
-    if "df_designations_matrix" not in st.session_state:
-        st.session_state.df_designations_matrix = pd.DataFrame([
-            {"Designations": "Product Manager"},
-            {"Designations": "Software Engineer"},
-            {"Designations": ""}
-        ])
-    
-    # FIXED: Direct outputs to a clean local dataframe variable to resolve rendering loop crash
-    edited_output_df = st.data_editor(
-        st.session_state.df_designations_matrix, 
-        num_rows="dynamic", 
-        max_rows=10, 
-        use_container_width=True,
-        key="designations_table_instance"
+    # REPLACED st.data_editor WITH A BULLETPROOF TEXT AREA FIELD
+    designations_input = st.text_area(
+        "Target Designations (Type or paste one per line, up to 10 max):",
+        value="Product Manager\nSoftware Engineer",
+        help="Type each job title on a completely fresh line.",
+        height=160
     )
 
 with col_right:
@@ -216,14 +204,14 @@ with col_right:
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
-    # FIXED: Safely pull rows from our un-deadlocked local variable instead
-    raw_rows = edited_output_df["Designations"].dropna().tolist()
-    active_designations = [str(d).strip() for d in raw_rows if str(d).strip() != ""]
+    # Convert text area lines into a clean Python list of titles
+    lines = designations_input.split("\n")
+    active_designations = [str(line).strip() for line in lines if str(line).strip() != ""][:10] # Enforce max 10 titles cap
     
     if not target_company:
         st.error("Execution halted: Please provide a valid target corporate entity name.")
     elif not active_designations:
-        st.error("Execution halted: Please provide at least one target designation title attribute inside the matrix table.")
+        st.error("Execution halted: Please enter at least one target designation title inside the text box.")
     else:
         raw_results_pool = []
         progress_bar = st.progress(0)
