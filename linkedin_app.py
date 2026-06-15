@@ -29,7 +29,6 @@ def get_base64_image(image_path):
 
 logo_base64 = get_base64_image("logo.jpeg") or get_base64_image("logo.jpg")
 
-# FIXED: Re-implemented clean, premium Desi-Cool Teal Aesthetic Layout Configuration
 st.markdown(
     """
     <style>
@@ -63,7 +62,7 @@ st.markdown(
         color: #ffffff !important;
         border-radius: 8px;
         border: none !important;
-        padding: 0.6rem 2 camp;
+        padding: 0.6rem 2rem;
         font-weight: 600;
     }
     div.stDownloadButton > button:hover {
@@ -75,11 +74,6 @@ st.markdown(
         overflow: hidden;
         box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
     }
-    .bottom-logo-container {
-        display: flex; justify-content: center; align-items: center; width: 100%;
-        margin-top: 50px; padding-top: 20px; margin-bottom: 20px;
-    }
-    .bottom-logo-container img { width: 140px; border-radius: 6px; }
     </style>
     """,
     unsafe_allow_html=True
@@ -146,13 +140,22 @@ class GoogleRSSXRayService:
                 
                 company_lower = company.lower()
                 headline_lower = headline.lower()
+                position_lower = position.lower()
                 
+                # 1. ACCURACY GATE: Clean designation check
+                # Ensures the target title keyword is explicitly in their headline profile summary
+                if position_lower not in headline_lower:
+                    continue
+                
+                # 2. ACCURACY GATE: Past-employment text exclusion filter
                 exclusion_tokens = ["former", "past:", "ex-", "previously", "retired", "ex-employee", "worked at"]
-                is_past_employee = any(token in clean_snippet or token in headline_lower for token in exclusion_tokens)
+                if any(token in clean_snippet or token in headline_lower for token in exclusion_tokens):
+                    continue
                 
-                is_verified_current = (company_lower in headline_lower) or (f"at {company_lower}" in clean_snippet)
-                
-                if is_past_employee or not is_verified_current:
+                # 3. ACCURACY GATE: Company-presence confirmation anchor
+                # Verified current only if company name links directly to the headline or snippet structure
+                is_verified_current = (company_lower in headline_lower) or (f"at {company_lower}" in clean_snippet) or (f"current: {company_lower}" in clean_snippet)
+                if not is_verified_current:
                     continue
                 
                 if "linkedin" in clean_snippet or "linkedin" in title_text.lower():
@@ -193,7 +196,7 @@ with col_right:
     st.markdown("---")
     st.caption(
         "💡 **Quality Assurance Notice:**\n"
-        "Historical listings, former roles, and mismatched profiles are automatically purged before compiling your spreadsheet."
+        "Strict multi-pass code filtering is active. Historical listings, former roles, and title-mismatched profiles are automatically purged."
     )
 
 if st.button("Execute Extraction Pipeline", type="primary"):
@@ -218,7 +221,6 @@ if st.button("Execute Extraction Pipeline", type="primary"):
             batch = search_service.fetch_strict_current_leads(target_company, position, locale_config)
             results_pool.extend(batch)
             
-            # FIXED: Safe, capped calculation to ensure the progress bar stays between 0.0 and 1.0
             prog_val = min(((idx + 0.5) / total_designations) * 0.5, 0.5)
             progress_bar.progress(float(prog_val))
             
@@ -234,7 +236,6 @@ if st.button("Execute Extraction Pipeline", type="primary"):
                 real_link = search_service.unshorten_google_url(google_url)
                 real_urls.append(real_link)
                 
-                # FIXED: Bounded step increments that will never exceed 1.0
                 prog_val = min(0.5 + ((i + 1) / total_urls) * 0.5, 1.0)
                 progress_bar.progress(float(prog_val))
                 
@@ -243,7 +244,7 @@ if st.button("Execute Extraction Pipeline", type="primary"):
             progress_bar.empty()
             status_text.empty()
             
-            st.success(f"Successfully compiled {len(df_final)} active leads for {selected_country}!")
+            st.success(f"Successfully compiled {len(df_final)} highly accurate active leads for {selected_country}!")
             
             display_cols = ["Full Name", "Company", "Current Designation", "LinkedIn Profile URL", "Status"]
             st.dataframe(df_final[display_cols], use_container_width=True)
@@ -261,7 +262,7 @@ if st.button("Execute Extraction Pipeline", type="primary"):
         else:
             progress_bar.empty()
             status_text.empty()
-            st.error(f"No active profiles matching those exact filters found in {selected_country}. Try checking the company spelling.")
+            st.error(f"No active profiles matching those exact filters found in {selected_country}. All generic matches were filtered out for accuracy.")
 
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
