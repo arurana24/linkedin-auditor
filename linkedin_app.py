@@ -123,21 +123,24 @@ with col_left:
     target_company = st.text_input("Target Company Name:", value="Google")
     
     st.markdown("##### Designations List (Max 10)")
-    # Setup editable dataframe workspace matrix
-    if "designations_df" not in st.session_state:
-        st.session_state.designations_df = pd.DataFrame([
-            {"Designations": "Product Manager"},
-            {"Designations": "Software Engineer"},
-            {"Designations": ""}
-        ])
+    
+    # SAFE INITIALIZATION: Initialize session state as a list of strings to fix the rendering crash
+    if "designations_list" not in st.session_state:
+        st.session_state.designations_list = ["Product Manager", "Software Engineer", ""]
         
+    # Generate a clean local DataFrame snapshot for the editor widget
+    local_df = pd.DataFrame({"Designations": st.session_state.designations_list})
+    
     edited_df = st.data_editor(
-        st.session_state.designations_df, 
+        local_df, 
         num_rows="dynamic", 
         max_rows=10, 
         use_container_width=True,
-        key="designations_editor"
+        key="designations_editor_instance"
     )
+    
+    # Save edits back to session state securely
+    st.session_state.designations_list = edited_df["Designations"].tolist()
 
 with col_right:
     st.markdown("### 2. Execution Toggles")
@@ -149,9 +152,8 @@ with col_right:
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
-    # Clean list parameters from table inputs
-    raw_list = edited_df["Designations"].dropna().tolist()
-    active_designations = [str(d).strip() for d in raw_list if str(d).strip() != ""]
+    # Clean list parameters directly from your synchronized session state list
+    active_designations = [str(d).strip() for d in st.session_state.designations_list if str(d).strip() != ""]
     
     if not target_company:
         st.error("Please provide a valid Target Company Name.")
