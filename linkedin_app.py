@@ -48,6 +48,7 @@ st.markdown(
     }
     div.stButton > button:hover, div.stDownloadButton > button:hover {
         background-color: #005a5a !important;
+        color: #ffffff !important;
     }
     .stProgress > div > div > div > div { background-color: #008080 !important; }
     </style>
@@ -75,7 +76,7 @@ class GoogleRSSXRayService:
     def __init__(self):
         self.base_url = "https://news.google.com/rss/search"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
     @staticmethod
@@ -176,7 +177,7 @@ with col_right:
     st.markdown("### 2. Geographic Filters")
     selected_country = st.selectbox("Select Target Country Perspective:", list(COUNTRY_MAP.keys()))
     st.info(
-        "🛡️ **System Infrastructure Status: Open Proxy Active**\n"
+        "🛡 *System Infrastructure Status: Open Proxy Active*\n"
         "This tool automatically traces underlying header networks to turn tracking strings into clean LinkedIn profile paths."
     )
 
@@ -205,13 +206,14 @@ if st.button("Run Personnel Target Search", type="primary"):
             status_text.text("Unpacking tracking headers to extract true LinkedIn profile URLs...")
             df_final = pd.DataFrame(results_pool).drop_duplicates(subset=["Professional Name"])
             
-            # Resolve short URLs inline sequentially
+            # CRITICAL LOOP FIX: Accessing records via safe string keys inside iterrows loop
             real_urls = []
             url_progress = st.progress(0)
             total_urls = len(df_final)
             
-            for i, row in enumerate(df_final.itertuples()):
-                real_link = search_service.unshorten_google_url(row.Google_Link_Container)
+            for i, (index, row) in enumerate(df_final.iterrows()):
+                google_url = row["Google Link Container"]
+                real_link = search_service.unshorten_google_url(google_url)
                 real_urls.append(real_link)
                 url_progress.progress((i + 1) / total_urls)
                 
@@ -219,7 +221,7 @@ if st.button("Run Personnel Target Search", type="primary"):
             url_progress.empty()
             status_text.empty()
             
-            st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} matching profiles.")
+            st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} unique corporate leads.")
             
             display_cols = ["Professional Name", "Current Profile Headline", "True LinkedIn Profile URL", "Employment Verification", "Target Designation"]
             st.dataframe(df_final[display_cols], use_container_width=True)
