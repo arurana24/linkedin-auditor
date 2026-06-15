@@ -56,7 +56,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Target LinkedIn subdomain filter per country zone
 COUNTRY_MAP = {
     "India 🇮🇳": {"hl": "en-IN", "gl": "IN", "ceid": "IN:en", "subdomain": "in.linkedin.com/in/"},
     "United States 🇺🇸": {"hl": "en-US", "gl": "US", "ceid": "US:en", "subdomain": "linkedin.com/in/"},
@@ -69,10 +68,6 @@ COUNTRY_MAP = {
 # SERVICE ARCHITECTURE LAYER
 # ==========================================
 class GoogleRSSXRayService:
-    """
-    Leverages Google's trusted indexing infrastructure to execute 
-    unlimited country-targeted lookups and verify live profile metadata.
-    """
     def __init__(self):
         self.base_url = "https://news.google.com/rss/search"
         self.headers = {
@@ -89,9 +84,6 @@ class GoogleRSSXRayService:
         return raw_title, "Professional Profile"
 
     def unshorten_google_url(self, google_url: str) -> str:
-        """
-        Follows the tracking link wrapper to extract the native, direct LinkedIn profile URL.
-        """
         try:
             response = requests.head(google_url, headers=self.headers, allow_redirects=True, timeout=5.0)
             final_url = response.url.split("?")[0]
@@ -102,14 +94,14 @@ class GoogleRSSXRayService:
             return google_url
 
     def fetch_country_targeted_leads(self, company: str, position: str, locale: dict) -> List[Dict[str, Any]]:
-        # STRICT BOOLEYAN LOGIC UPDATE: Adds precise contextual anchors directly into the search string
-        raw_query = f'site:{locale["subdomain"]} "{position}" "{company}" -intitle:"former" -intitle:"past"'
+        # FIXED: Removed strict quote mandates and negative operators to bring back high profile volumes
+        raw_query = f'site:{locale["subdomain"]} {company} {position}'
         encoded_query = quote(raw_query)
         
         request_url = f"{self.base_url}?q={encoded_query}&hl={locale['hl']}&gl={locale['gl']}&ceid={locale['ceid']}"
         
         try:
-            time.sleep(random.uniform(0.3, 0.8))
+            time.sleep(random.uniform(0.2, 0.5))
             response = requests.get(request_url, headers=self.headers, timeout=10.0)
             if response.status_code != 200:
                 return []
@@ -125,22 +117,23 @@ class GoogleRSSXRayService:
                 clean_snippet = re.sub(r'<[^>]*>', '', description_text).lower()
                 name, headline = self.parse_name_headline(title_text)
                 
-                # STRENGTHENED REVERIFICATION PASS
+                # SMART SCANNING PASS
                 company_lower = company.lower()
-                is_current = False
+                headline_lower = headline.lower()
                 
-                # Verify that the company name explicitly appears as a current anchor match
-                if company_lower in headline.lower() or f"at {company_lower}" in clean_snippet:
-                    is_current = True
-                    
-                # Explicitly flag past role keywords
+                # Check for explicit past role keywords
                 exclusion_tokens = ["former", "past:", "ex-", "previously", "retired", "ex-employee", "worked at"]
-                if any(token in clean_snippet or token in headline.lower() for token in exclusion_tokens):
-                    is_current = False
+                is_past_employee = any(token in clean_snippet or token in headline_lower for token in exclusion_tokens)
                 
-                # Skip past profiles entirely to clean up the output data table
-                if not is_current:
-                    continue
+                if is_past_employee:
+                    verification_status = "Unverified / Past Role ⚠️"
+                    sort_order = 2
+                elif company_lower in headline_lower or company_lower in clean_snippet:
+                    verification_status = "Verified Current ✅"
+                    sort_order = 0
+                else:
+                    verification_status = "Potential Match 🤔"
+                    sort_order = 1
                 
                 if "linkedin" in clean_snippet or "linkedin" in title_text.lower():
                     records.append({
@@ -149,7 +142,8 @@ class GoogleRSSXRayService:
                         "Professional Name": name,
                         "Current Profile Headline": headline,
                         "Google Link Container": google_link,
-                        "Employment Verification": "Verified Current ✅"
+                        "Employment Verification": verification_status,
+                        "sort_order": sort_order
                     })
             return records
         except Exception:
@@ -161,7 +155,7 @@ search_service = GoogleRSSXRayService()
 # STREAMLIT PRESENTATION VIEW LAYER
 # ==========================================
 st.title("Automated Client Extraction Matrix")
-st.markdown("Extract country-focused profiles with real-time verification filters. 100% Free & Unlimited.")
+st.markdown("Extract country-focused profiles with smart sorting alignment. 100% Free & Unlimited.")
 
 col_left, col_right = st.columns(2)
 
@@ -179,8 +173,8 @@ with col_right:
     st.markdown("### 2. Geographic Filters")
     selected_country = st.selectbox("Select Target Country Perspective:", list(COUNTRY_MAP.keys()))
     st.info(
-        "🛡️ **System Infrastructure Status: Strict Filter Active**\n"
-        "This version automatically drops past employees and extracts clean, direct LinkedIn URLs."
+        "🛡️ **System Infrastructure Status: Smart Priority Queue Active**\n"
+        "This version brings back full search volumes and automatically pushes Verified Current leads straight to the top of your list."
     )
 
 if st.button("Run Personnel Target Search", type="primary"):
@@ -208,6 +202,9 @@ if st.button("Run Personnel Target Search", type="primary"):
             status_text.text("Unpacking tracking headers to extract true LinkedIn profile URLs...")
             df_final = pd.DataFrame(results_pool).drop_duplicates(subset=["Professional Name"])
             
+            # Smart Sort: Verified Current (0) first, then Potential (1), then Past (2)
+            df_final = df_final.sort_values(by="sort_order").reset_index(drop=True)
+            
             real_urls = []
             url_progress = st.progress(0)
             total_urls = len(df_final)
@@ -222,7 +219,7 @@ if st.button("Run Personnel Target Search", type="primary"):
             url_progress.empty()
             status_text.empty()
             
-            st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} active corporate leads for {selected_country}.")
+            st.success(f"Pipeline executed successfully. Synchronized {len(df_final)} matching profiles for {selected_country}.")
             
             display_cols = ["Professional Name", "Current Profile Headline", "True LinkedIn Profile URL", "Employment Verification", "Target Designation"]
             st.dataframe(df_final[display_cols], use_container_width=True)
@@ -239,7 +236,7 @@ if st.button("Run Personnel Target Search", type="primary"):
             )
         else:
             status_text.empty()
-            st.error(f"No active matching profiles found in {selected_country}. All historical logs were successfully filtered out.")
+            st.error(f"No matching data streams found for {selected_country}. Try checking the company spelling.")
 
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
